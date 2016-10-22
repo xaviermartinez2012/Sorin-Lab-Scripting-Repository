@@ -58,21 +58,22 @@ def create_queue(working_directory):
 
 
 class DataProcessor (threading.Thread):
-    def __init__(self, threadID, name, q, logfile):
+    def __init__(self, threadID, name, queue, lock, logfile):
         threading.Thread.__init__(self)
-        self.threadID = threadID
-        self.name = name
-        self.q = q
+        self.tID = threadID
+        self.n = name
+        self.q = queue
+        self.l = lock
         self.log = logfile
 
     def run(self):
-        process_data(self.q, self.log)
+        process_data(self.q, self.l, self.log)
 
 
-def process_data(queue, logfile):
+def process_data(queue, lock, logfile):
     while not exitFlag:
         data = queue.get()
-        basename = data[:-4]
+        basename = (data.split("/")[-1])[:-4]
         basename_split = basename.split("_")
         project_number = basename_split[0][1:]
         run_number = basename_split[1][1:]
@@ -114,7 +115,7 @@ def process_data(queue, logfile):
         hydration_values = compute_neighbors(traj, ANGSTROM_CUTOFF, rna_atoms, haystack_indices=ow_atoms)
         ion_density_values = compute_neighbors(traj, ANGSTROM_CUTOFF, rna_atoms, haystack_indices=sodium_atoms)
 
-        with threading_lock.acquire():
+        with lock:
 
             try:
                 check_call(
@@ -282,7 +283,7 @@ exitFlag = 0
 
 with open(OUT_FILE, mode='w') as datafile:
     for t in range(NUM_THREADS):
-        thread = DataProcessor((t + 1), "T{}".format(t), xtc_queue, datafile)
+        thread = DataProcessor((t + 1), "T{}".format(t), xtc_queue, threading_lock, datafile)
         thread.setDaemon(True)
         thread.start()
         threads.append(thread)
