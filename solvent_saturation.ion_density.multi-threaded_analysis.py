@@ -8,6 +8,7 @@ import sys
 import os
 import argparse
 
+
 def create_queue(working_directory):
     work_queue = Queue.Queue()
     listdir = os.listdir
@@ -25,7 +26,7 @@ def create_queue(working_directory):
     return work_queue
 
 
-class DataProcessor (threading.Thread):
+class DataProcessor(threading.Thread):
     def __init__(self, threadID, name, queue, lock, logfile):
         threading.Thread.__init__(self)
         self.tID = threadID
@@ -33,40 +34,49 @@ class DataProcessor (threading.Thread):
         self.q = queue
         self.l = lock
         self.log = logfile
+        self.stop_event = threading.Event()
 
     def run(self):
-        process_data(self.q, self.l, self.log)
+        while not self.stop_event.isSet():
+            process_data(self.q, self.l, self.log)
+
+    def join(self, timeout=None):
+        self.stop_event.isSet()
+        super(DataProcessor, self).join(timeout)
 
 
 def process_data(queue, lock, logfile):
-    while True:
-        data = queue.get()
-        basename = (data.split("/")[-1])[:-4]
-        basename_split = basename.split("_")
-        project_number = basename_split[0][1:]
-        run_number = basename_split[1][1:]
-        clone_number = basename_split[2][1:]
-        traj = load(data, top=PDB)
-        hydration_values = compute_neighbors(traj, ANGSTROM_CUTOFF, rna_atoms, haystack_indices=ow_atoms)
-        ion_density_values = compute_neighbors(traj, ANGSTROM_CUTOFF, rna_atoms, haystack_indices=sodium_atoms)
-        with lock:
-            frames = []
-            append = frames.append
-            for frame_index in range(traj.n_frames):
-                frame = int(traj.time[frame_index])
-                # Check statement for repeated frames
-                if frame in frames:
-                    pass
-                else:
-                    append(frame)
-                    # Obtain the solvent saturation and ion density by counting the number of atom indices are
-                    # neighbors to the rna: distance(rna, water) < angstrom_cutoff
-                    hydration_number = len(hydration_values[frame_index])
-                    ion_density = len(ion_density_values[frame_index])
-                    # Write data to file
-                    logfile.write(
-                        '{:5} {:3} {:4} {:>6} {:<4} {:<4}\n'.format(project_number, run_number, clone_number, frame, hydration_number, ion_density))
-        queue.task_done()
+    try:
+        data = queue.get(True, 1)
+    except Queue.Empty:
+        return
+    basename = (data.split("/")[-1])[:-4]
+    basename_split = basename.split("_")
+    project_number = basename_split[0][1:]
+    run_number = basename_split[1][1:]
+    clone_number = basename_split[2][1:]
+    traj = load(data, top=PDB)
+    hydration_values = compute_neighbors(traj, ANGSTROM_CUTOFF, rna_atoms, haystack_indices=ow_atoms)
+    ion_density_values = compute_neighbors(traj, ANGSTROM_CUTOFF, rna_atoms, haystack_indices=sodium_atoms)
+    with lock:
+        frames = []
+        append = frames.append
+        for frame_index in range(traj.n_frames):
+            frame = int(traj.time[frame_index])
+            # Check statement for repeated frames
+            if frame in frames:
+                pass
+            else:
+                append(frame)
+                # Obtain the solvent saturation and ion density by counting the number of atom indices are
+                # neighbors to the rna: distance(rna, water) < angstrom_cutoff
+                hydration_number = len(hydration_values[frame_index])
+                ion_density = len(ion_density_values[frame_index])
+                # Write data to file
+                logfile.write(
+                    '{:5} {:3} {:4} {:>6} {:<4} {:<4}\n'.format(project_number, run_number, clone_number, frame,
+                                                                hydration_number, ion_density))
+    queue.task_done()
 
 
 # Function to check the existence of a file.
@@ -87,6 +97,7 @@ def valid_dir(path):
         raise argparse.ArgumentTypeError(
             '\"%s\" does not exist (must be in the same directory or specify full path).' % value)
     return value
+
 
 # Initialization of the argument parser.
 parser = argparse.ArgumentParser(
@@ -133,6 +144,10 @@ with open(OUT_FILE, mode='w') as datafile:
         thread.setDaemon(True)
         thread.start()
         threads.append(thread)
-    xtc_queue.join()
-    for t in threads:
-        t.join()
+    try:
+        xtc_queue.join()
+        for t in threads:
+            t.join()
+    except KeyboardInterrupt:
+        for t in threads:
+            t.join()
