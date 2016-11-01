@@ -38,45 +38,43 @@ class DataProcessor(threading.Thread):
 
     def run(self):
         while not self.stop_event.isSet():
-            process_data(self.q, self.l, self.log)
+            try:
+                data = self.q.get(True, 1)
+            except Queue.Empty:
+                continue
+            basename = (data.split("/")[-1])[:-4]
+            basename_split = basename.split("_")
+            project_number = basename_split[0][1:]
+            run_number = basename_split[1][1:]
+            clone_number = basename_split[2][1:]
+            traj = load(data, top=PDB)
+            hydration_values = compute_neighbors(traj, ANGSTROM_CUTOFF, rna_atoms, haystack_indices=ow_atoms)
+            ion_density_values = compute_neighbors(traj, ANGSTROM_CUTOFF, rna_atoms, haystack_indices=sodium_atoms)
+            with self.l:
+                print('{} writing to shared resource. Locking...'.format(self.n))
+                frames = []
+                append = frames.append
+                for frame_index in range(traj.n_frames):
+                    frame = int(traj.time[frame_index])
+                    # Check statement for repeated frames
+                    if frame in frames:
+                        pass
+                    else:
+                        append(frame)
+                        # Obtain the solvent saturation and ion density by counting the number of atom indices are
+                        # neighbors to the rna: distance(rna, water) < angstrom_cutoff
+                        hydration_number = len(hydration_values[frame_index])
+                        ion_density = len(ion_density_values[frame_index])
+                        # Write data to file
+                        self.log.write(
+                            '{:5} {:3} {:4} {:>6} {:<4} {:<4}\n'.format(project_number, run_number, clone_number, frame,
+                                                                        hydration_number, ion_density))
+                print('{} finished writing to shared resource. Unlocking...'.format(self.n))
+            self.q.task_done()
 
     def join(self, timeout=None):
-        self.stop_event.isSet()
+        self.stop_event.set()
         super(DataProcessor, self).join(timeout)
-
-
-def process_data(queue, lock, logfile):
-    try:
-        data = queue.get(True, 1)
-    except Queue.Empty:
-        return
-    basename = (data.split("/")[-1])[:-4]
-    basename_split = basename.split("_")
-    project_number = basename_split[0][1:]
-    run_number = basename_split[1][1:]
-    clone_number = basename_split[2][1:]
-    traj = load(data, top=PDB)
-    hydration_values = compute_neighbors(traj, ANGSTROM_CUTOFF, rna_atoms, haystack_indices=ow_atoms)
-    ion_density_values = compute_neighbors(traj, ANGSTROM_CUTOFF, rna_atoms, haystack_indices=sodium_atoms)
-    with lock:
-        frames = []
-        append = frames.append
-        for frame_index in range(traj.n_frames):
-            frame = int(traj.time[frame_index])
-            # Check statement for repeated frames
-            if frame in frames:
-                pass
-            else:
-                append(frame)
-                # Obtain the solvent saturation and ion density by counting the number of atom indices are
-                # neighbors to the rna: distance(rna, water) < angstrom_cutoff
-                hydration_number = len(hydration_values[frame_index])
-                ion_density = len(ion_density_values[frame_index])
-                # Write data to file
-                logfile.write(
-                    '{:5} {:3} {:4} {:>6} {:<4} {:<4}\n'.format(project_number, run_number, clone_number, frame,
-                                                                hydration_number, ion_density))
-    queue.task_done()
 
 
 # Function to check the existence of a file.
@@ -109,7 +107,7 @@ parser.add_argument('AngstromCutoff', type=float,
 parser.add_argument('pdb', type=valid_file, help='The native state .pdb file')
 parser.add_argument('wd', type=valid_dir, help='The working directory (must use FAH directory structure).')
 parser.add_argument('o', type=str, help='The name of the logfile.')
-parser.add_argument('t', type=int, default=2, help='The number of threads to run. Default is 2.')
+parser.add_argument('-t', metavar='threads', type=int, default=2, help='The number of threads to run. Default is 2.')
 args = parser.parse_args()
 
 # Initialization of the variables that correspond to the arguments passed by the user.
@@ -149,5 +147,4 @@ with open(OUT_FILE, mode='w') as datafile:
         for t in threads:
             t.join()
     except KeyboardInterrupt:
-        for t in threads:
-            t.join()
+        sys.exit(0)
