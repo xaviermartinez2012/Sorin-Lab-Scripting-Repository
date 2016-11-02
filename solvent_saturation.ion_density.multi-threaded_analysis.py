@@ -6,6 +6,7 @@ import threading
 import mdtraj as md
 import os
 import argparse
+import pickle
 from time import clock
 
 
@@ -39,7 +40,7 @@ class DataProcessor(threading.Thread):
     def run(self):
         while not self.s_e.isSet():
             try:
-                data = self.q.get(True, 0.05)
+                data = self.q.get(True, 0.001)
             except Queue.Empty:
                 continue
             basename = (data.split("/")[-1])[:-4]
@@ -49,7 +50,7 @@ class DataProcessor(threading.Thread):
             run_number = basename_split[1][1:]
             clone_number = basename_split[2][1:]
             traj = load(data, top=PDB)
-            hydration_values = compute_neighbors(traj, ANGSTROM_CUTOFF, rna_atoms, haystack_indices=ow_atoms)
+            hydration_values = compute_neighbors(traj, ANGSTROM_CUTOFF, rna_atoms, haystack_indices=water_molecules)
             ion_density_values = compute_neighbors(traj, ANGSTROM_CUTOFF, rna_atoms, haystack_indices=sodium_atoms)
             with self.l:
                 print('{} writing data to {}. Locking...'.format(self.n, OUT_FILE))
@@ -78,6 +79,12 @@ class DataProcessor(threading.Thread):
     def join(self, timeout=None):
         self.s_e.set()
         super(DataProcessor, self).join(timeout)
+
+
+def serialize_analysis(data_dict):
+    output = open('solventSaturation.ionDensity.{}angstromCutoff.dataset.pkl'.format(ANGSTROM_CUTOFF), mode='wb')
+    pickle.dump(data_dict, output, -1)
+
 
 # Function to check the existence of a file.
 # Used in conjunction with argparse to check that the given parameter files exist.
@@ -126,11 +133,11 @@ compute_neighbors = md.compute_neighbors
 # Load just the topology once to select the atom indices of the rna(protein) and water.
 # This is used to calculate the Hydration number and ion density of a particular frame.
 # We do this once to save processing time since the topology does not change from frame to frame.
-topology = md.load(PDB).topology
+topology = load(PDB).topology
 rna_atoms = [atom.index for atom in topology.atoms if
              ('Na+' not in atom.residue.name and "HOH" not in atom.residue.name)]
 sodium_atoms = [atom.index for atom in topology.atoms if 'Na+' in atom.residue.name]
-ow_atoms = topology.select('name O and water')
+water_molecules = topology.select('name O and water')
 
 # Create a queue of xtcs for the threads to operate on.
 xtc_queue = create_queue(DATASET_DIRECTORY)
@@ -150,4 +157,24 @@ with open(OUT_FILE, mode='w') as datafile:
     xtc_queue.join()
     for thread in pool:
         thread.join()
-    print('Total runtime: {}'.format(str(round((clock() - start), 2))))
+    print('Total runtime: {} minutes.'.format(str(round((clock() - start)/60.00, 2))))
+
+data_dict = {}
+with open(OUT_FILE, 'r') as data:
+    for line in data:
+        split = line.split()
+        project, run, clone, time = split[0], split[1], split[2], split[3]
+        hydrationValue = split[4]
+        ionDensity = split[5]
+        if data_dict.get(project):
+            if data_dict.get(project).get(run):
+                if data_dict.get(project).get(run).get(clone):
+                    data_dict.get(project).get(run).get(clone)[time] = [hydrationValue, ionDensity]
+                else:
+                    data_dict[project][run][clone] = {time: [hydrationValue, ionDensity]}
+            else:
+                data_dict[project][run] = {clone: {time: [hydrationValue, ionDensity]}}
+        else:
+            data_dict[project] = {run: {clone: {time: [hydrationValue, ionDensity]}}}
+
+serialize_analysis(data_dict)
