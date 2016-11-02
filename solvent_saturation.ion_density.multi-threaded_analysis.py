@@ -4,9 +4,9 @@
 import Queue
 import threading
 import mdtraj as md
-import sys
 import os
 import argparse
+from time import clock
 
 
 def create_queue(working_directory):
@@ -34,15 +34,16 @@ class DataProcessor(threading.Thread):
         self.q = queue
         self.l = lock
         self.log = logfile
-        self.stop_event = threading.Event()
+        self.s_e = threading.Event()
 
     def run(self):
-        while not self.stop_event.isSet():
+        while not self.s_e.isSet():
             try:
-                data = self.q.get(True, 1)
+                data = self.q.get(True, 0.05)
             except Queue.Empty:
                 continue
             basename = (data.split("/")[-1])[:-4]
+            print("{} processing {}.xtc".format(self.n, basename))
             basename_split = basename.split("_")
             project_number = basename_split[0][1:]
             run_number = basename_split[1][1:]
@@ -51,7 +52,7 @@ class DataProcessor(threading.Thread):
             hydration_values = compute_neighbors(traj, ANGSTROM_CUTOFF, rna_atoms, haystack_indices=ow_atoms)
             ion_density_values = compute_neighbors(traj, ANGSTROM_CUTOFF, rna_atoms, haystack_indices=sodium_atoms)
             with self.l:
-                print('{} writing to shared resource. Locking...'.format(self.n))
+                print('{} writing data to {}. Locking...'.format(self.n, OUT_FILE))
                 frames = []
                 append = frames.append
                 for frame_index in range(traj.n_frames):
@@ -69,13 +70,14 @@ class DataProcessor(threading.Thread):
                         self.log.write(
                             '{:5} {:3} {:4} {:>6} {:<4} {:<4}\n'.format(project_number, run_number, clone_number, frame,
                                                                         hydration_number, ion_density))
-                print('{} finished writing to shared resource. Unlocking...'.format(self.n))
+                print('{} finished writing to {}. Unlocking...'.format(self.n, OUT_FILE))
             self.q.task_done()
+            print('.xtc\'s in processing queue: {}'.format(self.q.qsize()))
+        print('{} terminating...'.format(self.n))
 
     def join(self, timeout=None):
-        self.stop_event.set()
+        self.s_e.set()
         super(DataProcessor, self).join(timeout)
-
 
 # Function to check the existence of a file.
 # Used in conjunction with argparse to check that the given parameter files exist.
@@ -132,19 +134,20 @@ ow_atoms = topology.select('name O and water')
 
 # Create a queue of xtcs for the threads to operate on.
 xtc_queue = create_queue(DATASET_DIRECTORY)
+print('.xtc\'s in processing queue: {}'.format(xtc_queue.qsize()))
 
 # Initialization of threads and lock
 threading_lock = threading.Lock()
-threads = []
+kill_switch = threading.Event()
+pool = []
 with open(OUT_FILE, mode='w') as datafile:
     for t in range(NUM_THREADS):
         thread = DataProcessor((t + 1), "T{}".format(t), xtc_queue, threading_lock, datafile)
         thread.setDaemon(True)
         thread.start()
-        threads.append(thread)
-    try:
-        xtc_queue.join()
-        for t in threads:
-            t.join()
-    except KeyboardInterrupt:
-        sys.exit(0)
+        pool.append(thread)
+    start = clock()
+    xtc_queue.join()
+    for thread in pool:
+        thread.join()
+    print('Total runtime: {}'.format(str(round((clock() - start), 2))))
