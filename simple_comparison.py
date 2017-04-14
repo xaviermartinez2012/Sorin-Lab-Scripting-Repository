@@ -63,6 +63,6 @@ for file_two_line in FILE_TWO_LINES:
             hits += 1
             break
     if hits == 0:
-        print '-- Line: {} in {} not in {}'.format(line_two, FILES[0], FILES[1])
+        print '-- Line: {} in {} not in {}'.format(line_two, FILES[1], FILES[0])
         TOTAL_MISSING_FILE2_NOTIN_FILE1 += 1
 print '-- Total Missing: {}'.format(TOTAL_MISSING_FILE2_NOTIN_FILE1)
