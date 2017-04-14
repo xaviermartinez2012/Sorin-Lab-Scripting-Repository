@@ -12,6 +12,7 @@ def valid_file(path):
             '\"{}\" does not exist (must be in the same directory or specify full path).' % path)
     return path
 
+
 PARSER = argparse.ArgumentParser(
     description='Simple Comparison Script.',
     epilog='Designed by Xavier Martinez on April 12th, 2016')
@@ -23,7 +24,6 @@ FILES = ARGS.txt
 NUM_FILES = len(FILES)
 assert NUM_FILES == 2, 'Required arguments 2. Arguments given: {}'.format(
     NUM_FILES)
-TOTAL_DIFFERENCE = 0
 
 FILE_ONE_LINES = []
 FILE_TWO_LINES = []
@@ -33,6 +33,8 @@ with open(FILES[0], mode='r') as file_one:
         FILE_ONE_LINES = file_one.readlines()
         FILE_TWO_LINES = file_two.readlines()
 
+print '-- Comparison Results for {} --'.format(FILES[0])
+TOTAL_MISSING_FILE1_NOTIN_FILE2 = 0
 for file_one_line in FILE_ONE_LINES:
     hits = 0
     line_one = file_one_line.encode('UTF-8')
@@ -42,7 +44,25 @@ for file_one_line in FILE_ONE_LINES:
         line_two = file_two_line.strip()
         if line_one == line_two:
             hits += 1
+            break
     if hits == 0:
         print '-- Line: {} in {} not in {}'.format(line_one, FILES[0], FILES[1])
-        TOTAL_DIFFERENCE += 1
-print '-- Total differences: {}'.format(TOTAL_DIFFERENCE)
+        TOTAL_MISSING_FILE1_NOTIN_FILE2 += 1
+print '-- Total Missing: {}'.format(TOTAL_MISSING_FILE1_NOTIN_FILE2)
+
+print '-- Comparison Results for {} --'.format(FILES[1])
+TOTAL_MISSING_FILE2_NOTIN_FILE1 = 0
+for file_two_line in FILE_TWO_LINES:
+    hits = 0
+    line_two = file_two_line.encode('UTF-8')
+    line_two = file_two_line.strip()
+    for file_one_line in FILE_ONE_LINES:
+        line_one = file_one_line.encode('UTF-8')
+        line_one = file_one_line.strip()
+        if line_one == line_two:
+            hits += 1
+            break
+    if hits == 0:
+        print '-- Line: {} in {} not in {}'.format(line_two, FILES[0], FILES[1])
+        TOTAL_MISSING_FILE2_NOTIN_FILE1 += 1
+print '-- Total Missing: {}'.format(TOTAL_MISSING_FILE2_NOTIN_FILE1)
